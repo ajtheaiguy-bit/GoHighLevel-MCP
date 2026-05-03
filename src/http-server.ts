@@ -7,6 +7,8 @@ import express from 'express';
 import cors from 'cors';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { randomUUID } from 'crypto';
 import { 
   CallToolRequestSchema,
   ErrorCode,
@@ -396,6 +398,61 @@ class GHLMCPHttpServer {
 
       await transport.handlePostMessage(req, res, req.body);
     });
+
+    // ========================================================
+    // Streamable HTTP transport (the modern MCP transport, used
+    // by ElevenLabs, Claude, etc. — replaces deprecated SSE)
+    // ========================================================
+    const streamableTransports = new Map<string, StreamableHTTPServerTransport>();
+
+    const handleMcpRequest = async (req: express.Request, res: express.Response) => {
+      try {
+        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+        let transport: StreamableHTTPServerTransport | undefined;
+
+        if (sessionId && streamableTransports.has(sessionId)) {
+          transport = streamableTransports.get(sessionId);
+        } else if (!sessionId && req.method === 'POST') {
+          // First request from a client — open a new session.
+          transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (sid: string) => {
+              streamableTransports.set(sid, transport!);
+              console.log(`[GHL MCP HTTP] Streamable session opened: ${sid}`);
+            }
+          });
+          transport.onclose = () => {
+            if (transport!.sessionId) {
+              streamableTransports.delete(transport!.sessionId);
+              console.log(`[GHL MCP HTTP] Streamable session closed: ${transport!.sessionId}`);
+            }
+          };
+          await this.server.connect(transport);
+        } else {
+          res.status(400).json({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Bad Request: no valid session ID' },
+            id: null
+          });
+          return;
+        }
+
+        await transport!.handleRequest(req, res, req.body);
+      } catch (error) {
+        console.error('[GHL MCP HTTP] Streamable request error:', error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: { code: -32603, message: 'Internal server error' },
+            id: null
+          });
+        }
+      }
+    };
+
+    this.app.post('/mcp', handleMcpRequest);
+    this.app.get('/mcp', handleMcpRequest);
+    this.app.delete('/mcp', handleMcpRequest);
 
     // Root endpoint with server info
     this.app.get('/', (req, res) => {
