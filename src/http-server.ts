@@ -115,12 +115,14 @@ class GHLMCPHttpServer {
    * Setup Express middleware and configuration
    */
   private setupExpress(): void {
-    // Enable CORS for ChatGPT integration
+    // Enable CORS. MCP clients (ChatGPT, ElevenLabs, Claude Desktop, etc.)
+    // connect from various origins, so allow any origin and only restrict
+    // the methods/headers actually used by the MCP protocol.
     this.app.use(cors({
-      origin: ['https://chatgpt.com', 'https://chat.openai.com', 'http://localhost:*'],
+      origin: true,
       methods: ['GET', 'POST', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-      credentials: true
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'mcp-session-id'],
+      exposedHeaders: ['mcp-session-id']
     }));
 
     // Parse JSON requests
