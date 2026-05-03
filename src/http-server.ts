@@ -382,6 +382,9 @@ class GHLMCPHttpServer {
 
     // POST /messages: client sends JSON-RPC messages here. The transport
     // matched by sessionId pushes responses back through the SSE stream.
+    // express.json() has already consumed req's stream, so pass req.body
+    // as the third arg — otherwise handlePostMessage would re-read the
+    // stream and fail with "stream is not readable".
     this.app.post('/messages', async (req, res) => {
       const sessionId = req.query.sessionId as string;
       const transport = transports.get(sessionId);
@@ -391,7 +394,7 @@ class GHLMCPHttpServer {
         return;
       }
 
-      await transport.handlePostMessage(req, res);
+      await transport.handlePostMessage(req, res, req.body);
     });
 
     // Root endpoint with server info
